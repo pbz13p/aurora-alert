@@ -92,7 +92,6 @@ def push(title, message, priority="high", tags="sparkles"):
             "Title": "=?UTF-8?B?" + __import__("base64").b64encode(title.encode()).decode() + "?=",
             "Priority": priority,
             "Tags": tags,
-            "Click": "https://www.swpc.noaa.gov/communities/aurora-dashboard-experimental",
         },
         method="POST",
     )
