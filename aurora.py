@@ -111,16 +111,19 @@ def current_conditions():
     vals = [v for v in vals if v is not None]
     out["kp"] = max(vals) if vals else None
 
-    mag = rows(get_json(f"{SWPC}/products/solar-wind/mag-5-minute.json"))
-    bz = [num(r.get("bz_gsm")) for r in mag
-          if now - parse_time(r["time_tag"]) <= timedelta(minutes=25)]
-    bz = [v for v in bz if v is not None]
-    out["bz"] = sum(bz) / len(bz) if bz else None
+    # 实时太阳风（RTSW，1分钟数据；多颗卫星，只用当前 active 那颗）
+    def recent_active(url, field):
+        vals = []
+        for r in get_json(url):
+            if r.get("active") and now - parse_time(r["time_tag"]) <= timedelta(minutes=25):
+                v = num(r.get(field))
+                if v is not None:
+                    vals.append(v)
+        return vals
 
-    plasma = rows(get_json(f"{SWPC}/products/solar-wind/plasma-5-minute.json"))
-    sp = [num(r.get("speed")) for r in plasma
-          if now - parse_time(r["time_tag"]) <= timedelta(minutes=25)]
-    sp = [v for v in sp if v is not None]
+    bz = recent_active(f"{SWPC}/json/rtsw/rtsw_mag_1m.json", "bz_gsm")
+    out["bz"] = sum(bz) / len(bz) if bz else None
+    sp = recent_active(f"{SWPC}/json/rtsw/rtsw_wind_1m.json", "proton_speed")
     out["speed"] = max(sp) if sp else None
     return out
 
@@ -280,7 +283,7 @@ def run_test():
     except Exception as e:
         data_txt += f"\n（预报出错：{e}）"
     data_txt += cloud_cover()
-    push("✅ 极光提醒已开通", "这是测试通知，系统正常运行。\n" + data_txt, priority="default", tags="white_check_mark")
+    push("极光提醒已开通", "这是测试通知，系统正常运行。\n" + data_txt, priority="default", tags="white_check_mark")
 
 
 if __name__ == "__main__":
