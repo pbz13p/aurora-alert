@@ -26,8 +26,12 @@ SPEED_ALERT = 450.0     # 太阳风速度（km/s）
 WATCH_KP = 6.0          # 未来3天预测 Kp ≥ 6 就提前提醒
 REPEAT_HOURS = 3        # 同一场 3 小时内不重复提醒（除非升级）
 
-# Cape Schanck（看极光点）用来查云量
-SPOT_LAT, SPOT_LON = -38.49, 144.89
+# 看极光点（由近到远），每条提醒都带各点云量
+SPOTS = [
+    ("Malvern East 家附近", -37.875, 145.07),
+    ("Ricketts Point 海边（约25分钟）", -37.995, 145.03),
+    ("Cape Schanck / Flinders（约1小时20分）", -38.49, 144.95),
+]
 
 
 def get_json(url):
@@ -128,25 +132,40 @@ def kp_forecast():
 
 
 def cloud_cover():
-    """Cape Schanck 未来几小时平均云量（%），失败返回 None。"""
+    """各看点未来几小时平均云量，返回多行文字；失败返回空字符串。"""
     try:
+        lats = ",".join(str(s[1]) for s in SPOTS)
+        lons = ",".join(str(s[2]) for s in SPOTS)
         d = get_json(
             "https://api.open-meteo.com/v1/forecast"
-            f"?latitude={SPOT_LAT}&longitude={SPOT_LON}&hourly=cloud_cover"
+            f"?latitude={lats}&longitude={lons}&hourly=cloud_cover"
             "&forecast_hours=4&timezone=UTC"
         )
-        v = [x for x in d["hourly"]["cloud_cover"] if x is not None]
-        return round(sum(v) / len(v)) if v else None
+        if isinstance(d, dict):
+            d = [d]
+        lines = []
+        for (name, _, _), loc in zip(SPOTS, d):
+            v = [x for x in loc["hourly"]["cloud_cover"] if x is not None]
+            if v:
+                c = round(sum(v) / len(v))
+                mark = "✅" if c < 40 else ("⚠️" if c < 70 else "❌")
+                lines.append(f"{mark} {name} 云量 {c}%")
+        return "\n☁️ 云量：\n" + "\n".join(lines) if lines else ""
     except Exception as e:
         print("cloud error:", e)
-        return None
+        return ""
 
 
 def fmt(v, nd=1):
     return "—" if v is None else f"{v:.{nd}f}"
 
 
-TIPS = "去南边海岸无灯的地方（Cape Schanck / Flinders / Inverloch），朝正南，手机夜景模式拍3秒以上。"
+TIPS = "朝正南、避开路灯，手机夜景模式拍3秒以上（相机比肉眼明显）。"
+WHERE = {
+    3: "📍 强极光：家附近/Ricketts Point 海边就可能看到，去半岛更清楚。",
+    2: "📍 家附近肉眼难见，建议去 Ricketts Point 拍，最好去半岛（Cape Schanck/Flinders）。",
+    1: "📍 先别急着出门，等升级提醒；想抢先就往半岛开。",
+}
 
 
 # ---------------- 三种模式 ----------------
@@ -180,8 +199,7 @@ def run_realtime():
             print("already alerted recently")
             return
 
-    cloud = cloud_cover()
-    cloud_txt = f"\n☁️ Cape Schanck 云量约 {cloud}%" if cloud is not None else ""
+    cloud_txt = cloud_cover()
     data_txt = f"Kp {fmt(kp)} · Bz {fmt(bz)} nT · 风速 {fmt(speed, 0)} km/s"
 
     if level == 3:
@@ -194,7 +212,7 @@ def run_realtime():
         title, pri = "🟡 极光可能来了（30–60分钟内）", "default"
         body = "太阳风变强、Bz 转南，可能会升级，可以准备出发。"
 
-    push(title, f"{body}\n{data_txt}{cloud_txt}\n{TIPS}", priority=pri)
+    push(title, f"{body}\n{data_txt}\n{WHERE[level]}{cloud_txt}\n{TIPS}", priority=pri)
     state["realtime"] = {"time": datetime.now(timezone.utc).isoformat(), "level": level}
     save_state(state)
 
@@ -242,9 +260,7 @@ def run_test():
         data_txt += f"\n未来3天预测最高 Kp {fmt(peak)}"
     except Exception as e:
         data_txt += f"\n（预报出错：{e}）"
-    cloud = cloud_cover()
-    if cloud is not None:
-        data_txt += f"\nCape Schanck 云量约 {cloud}%"
+    data_txt += cloud_cover()
     push("✅ 极光提醒已开通", "这是测试通知，系统正常运行。\n" + data_txt, priority="default", tags="white_check_mark")
 
 
