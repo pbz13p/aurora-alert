@@ -26,11 +26,19 @@ SPEED_ALERT = 450.0     # 太阳风速度（km/s）
 WATCH_KP = 6.0          # 未来3天预测 Kp ≥ 6 就提前提醒
 REPEAT_HOURS = 3        # 同一场 3 小时内不重复提醒（除非升级）
 
-# 看极光点（由近到远），每条提醒都带各点云量
+# 看极光点：按“清楚程度”排名（越暗、南边越开阔越靠前），(排名名称, 车程, 纬度, 经度)
 SPOTS = [
-    ("Malvern East 家附近", -37.875, 145.07),
-    ("Ricketts Point 海边（约25分钟）", -37.995, 145.03),
-    ("Cape Schanck / Flinders（约1小时20分）", -38.49, 144.95),
+    ("1 Wilsons Prom（Tidal River）", "约3小时", -39.03, 146.32),
+    ("2 Cape Schanck", "约1小时20分", -38.49, 144.89),
+    ("3 Flinders", "约1小时15分", -38.48, 145.02),
+    ("4 Phillip Island（Pyramid Rock）", "约1小时40分", -38.53, 145.25),
+    ("5 Point Lonsdale", "约1小时40分", -38.29, 144.61),
+    ("6 Inverloch（Eagles Nest）", "约2小时", -38.64, 145.73),
+    ("7 Heathcote（内陆暗空）", "约1小时45分", -36.92, 144.71),
+    ("8 Werribee South / Point Cook", "约45分钟", -37.97, 144.69),
+    ("9 Ricketts Point（市区最佳）", "约25分钟", -37.995, 145.03),
+    ("10 Point Ormond（Elwood）", "约25分钟", -37.88, 144.98),
+    ("11 Malvern East 家附近", "0分钟", -37.875, 145.07),
 ]
 
 
@@ -131,11 +139,12 @@ def kp_forecast():
     return out
 
 
-def cloud_cover():
-    """各看点未来几小时平均云量，返回多行文字；失败返回空字符串。"""
+def cloud_cover(level=2):
+    """各看点未来几小时云量 + 推荐地点，返回多行文字；失败返回空字符串。
+    level 3（强）：推荐最近的晴朗点；其他：推荐排名最高的晴朗点（第2–7名里选，Prom 太远不推荐）。"""
     try:
-        lats = ",".join(str(s[1]) for s in SPOTS)
-        lons = ",".join(str(s[2]) for s in SPOTS)
+        lats = ",".join(str(s[2]) for s in SPOTS)
+        lons = ",".join(str(s[3]) for s in SPOTS)
         d = get_json(
             "https://api.open-meteo.com/v1/forecast"
             f"?latitude={lats}&longitude={lons}&hourly=cloud_cover"
@@ -143,14 +152,24 @@ def cloud_cover():
         )
         if isinstance(d, dict):
             d = [d]
-        lines = []
-        for (name, _, _), loc in zip(SPOTS, d):
+        res = []
+        for (name, drive, _, _), loc in zip(SPOTS, d):
             v = [x for x in loc["hourly"]["cloud_cover"] if x is not None]
             if v:
-                c = round(sum(v) / len(v))
-                mark = "✅" if c < 40 else ("⚠️" if c < 70 else "❌")
-                lines.append(f"{mark} {name} 云量 {c}%")
-        return "\n☁️ 云量：\n" + "\n".join(lines) if lines else ""
+                res.append((name, drive, round(sum(v) / len(v))))
+        if not res:
+            return ""
+        clear = [r for r in res if r[2] < 40]
+        if level >= 3:
+            pick = clear[-1] if clear else None      # 列表最后 = 最近
+        else:
+            top = [r for r in clear if 2 <= int(r[0].split()[0]) <= 7]  # Prom 太远，临时出发不推荐
+            pick = top[0] if top else None
+        head = (f"\n👉 推荐：{pick[0][pick[0].index(' ')+1:]}（云量{pick[2]}%，{pick[1]}）"
+                if pick else "\n👉 各地云都比较多，可能白跑，谨慎出发")
+        lines = [f"{'✅' if c < 40 else ('⚠️' if c < 70 else '❌')} {n} · {dr} · 云{c}%"
+                 for n, dr, c in res]
+        return head + "\n☁️ 地点排名（越前越清楚）：\n" + "\n".join(lines)
     except Exception as e:
         print("cloud error:", e)
         return ""
@@ -162,9 +181,9 @@ def fmt(v, nd=1):
 
 TIPS = "朝正南、避开路灯，手机夜景模式拍3秒以上（相机比肉眼明显）。"
 WHERE = {
-    3: "📍 强极光：家附近/Ricketts Point 海边就可能看到，去半岛更清楚。",
-    2: "📍 家附近肉眼难见，建议去 Ricketts Point 拍，最好去半岛（Cape Schanck/Flinders）。",
-    1: "📍 先别急着出门，等升级提醒；想抢先就往半岛开。",
+    3: "📍 强极光：家附近、Ricketts Point 就可能肉眼看到，越往南越清楚。",
+    2: "📍 家附近肉眼难见，相机在 Ricketts Point 能拍到；想看清楚去前5名的地点。",
+    1: "📍 先别急着出门，等升级提醒；想抢先就往前5名的地点开。",
 }
 
 
@@ -199,7 +218,7 @@ def run_realtime():
             print("already alerted recently")
             return
 
-    cloud_txt = cloud_cover()
+    cloud_txt = cloud_cover(level)
     data_txt = f"Kp {fmt(kp)} · Bz {fmt(bz)} nT · 风速 {fmt(speed, 0)} km/s"
 
     if level == 3:
